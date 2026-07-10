@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+**/.venv/
+*.egg-info/
+
+# AgentCore CLI generated / heavy / secret / build artifacts
+agentcore/cdk/node_modules/
+agentcore/cdk/cdk.out/
+agentcore/.cli/
+agentcore/.cache/
+agentcore/.env.local
+**/staging/
+*.zip
+
+# macOS
+.DS_Store
