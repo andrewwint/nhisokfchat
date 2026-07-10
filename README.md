@@ -1,104 +1,98 @@
-# AgentCore Project
+# nhisokfchat — a grounded health-stats chat on Bedrock AgentCore, with no vector database
 
-This project was created with the [AgentCore CLI](https://github.com/aws/agentcore-cli).
-
-## Project Structure
+Ask a natural-language question about U.S. health survey data and get back a **survey-weighted,
+execution-verified figure with its citation and confidence interval** — or a clean refusal when
+the answer isn't in the verified corpus. The whole thing deploys as a single **~93 MB AgentCore
+CodeZip**. There is no vector store, no chunking service, and no embeddings endpoint.
 
 ```
-my-project/
-├── AGENTS.md               # AI coding assistant context
-├── agentcore/
-│   ├── agentcore.json      # Project config (agents, memories, credentials, gateways, evaluators)
-│   ├── aws-targets.json    # Deployment targets (account + region)
-│   ├── .env.local          # Secrets — API keys (gitignored)
-│   ├── .llm-context/       # TypeScript type definitions for AI assistants
-│   │   ├── agentcore.ts    # AgentCoreProjectSpec types
-│   │   ├── aws-targets.ts  # Deployment target types
-│   │   └── mcp.ts          # Gateway and MCP tool types
-│   └── cdk/                # CDK infrastructure (@aws/agentcore-cdk)
-├── app/                    # Agent application code
-└── evaluators/             # Custom evaluator code (if any)
+$ agentcore invoke --prompt "What share of U.S. adults with diagnosed diabetes take insulin?"
+> 31.96% (95% CI 30.08–33.84%) of U.S. adults with diagnosed diabetes currently take
+> insulin [DIBINS_A]. Survey-weighted, NHIS 2023. (Not medical advice.)
+
+$ agentcore invoke --prompt "What is the prevalence of asthma among US adults?"
+> I cannot answer this from the verified bundle — there is no asthma concept, and I don't
+> invent numbers. (See CDC NCHS for authoritative asthma statistics.)
 ```
 
-## Getting Started
+More real transcripts in [docs/SAMPLE.md](docs/SAMPLE.md).
 
-### Prerequisites
+## The idea: OKF + AgentCore
 
-- **Node.js** 20.x or later
-- **Python 3.10+** and **uv** for Python agents ([install uv](https://docs.astral.sh/uv/getting-started/installation/))
-- **AWS credentials** configured (`aws configure` or environment variables)
-- **Docker** (only for Container build agents)
+**OKF (Open Knowledge Format)** is a directory of markdown files with YAML frontmatter — one
+per verified *concept*. Each file here isn't a query recipe or a raw doc; it's an **answer that
+already passed execution-grounded verification**: the documented analysis was *run* against the
+real CDC NHIS microdata with proper survey weights, and only the concepts whose numbers checked
+out were written to the bundle. A statistic that is structurally clean but statistically wrong
+(ignores the survey weights, or breaks a skip-pattern) is **quarantined** — it never becomes a
+file, so it can never be retrieved.
 
-### Development
+That upstream curation is what removes the vector database:
 
-Run your agent locally:
+```
+raw microdata → execution-grounded verification → verified .okf/ markdown → in-process retrieval → LLM
+```
+
+**Grounding is enforced by what exists, not by prompt instructions.** The agent's only window
+onto the data is `search_verified_okf`, retrieval over the bundle that ships inside the CodeZip.
+A quarantined figure is physically absent, so it is unreachable.
+
+## Why AgentCore is the cornerstone
+
+AgentCore Runtime accepts a **direct-code (CodeZip) deployment up to 250 MB compressed**. That
+budget is the enabling constraint: it's enough to carry the **entire verified knowledge bundle
+plus a pure-Python retrieval engine inside the deployable artifact** — so the "knowledge base"
+is the CodeZip itself, not a managed vector cluster you provision, sync, and pay for. Deploy the
+zip, and the grounded corpus goes with it. This runtime is retrieval-only (no pandas), ~93 MB.
+
+## Deploy it
+
+Prerequisites: an AWS account with Bedrock (Claude Sonnet) model access, the
+[`agentcore` CLI](https://github.com/aws/agentcore-cli) (`npm i -g @aws/agentcore`), Node 20+,
+and CDK bootstrapped in your region.
 
 ```bash
-agentcore dev
+agentcore deploy                 # build the CodeZip → CloudFormation → AgentCore runtime
+agentcore invoke --prompt "..."  # ask the deployed agent
+agentcore status                 # runtime ARN + health
+agentcore remove all && agentcore deploy   # tear it down
 ```
 
-### Deployment
+The runtime entrypoint (`app/nhisokfchat/main.py`) is a thin shim: it re-exports the reviewed
+agent from the vendored `nhis_okf` package and pins it to retrieval-only, grounded mode.
 
-Deploy to AWS:
+## How it answers (and refuses)
 
-```bash
-agentcore deploy
+- **Retrieval-only + grounded-or-refuse.** The agent quotes only the survey-weighted figure a
+  verified concept carries, cites its concept id (e.g. `[DIBINS_A]`), states the universe/weight
+  basis, and refuses rather than guess when nothing matches.
+- **Design-based confidence intervals.** Every prevalence carries a Taylor-linearization CI over
+  the survey's strata/PSUs (not a naive simple-random-sampling interval).
+- **Safety scope.** Public, de-identified, **aggregate** survey data only — not medical advice,
+  no individual-level inference. Every figure carries its survey-weighted basis and source.
+
+## What's in the bundle
+
+Verified NHIS 2023 concepts across a diabetes and hypertension slice — e.g. diagnosed-diabetes
+prevalence, insulin use *among diagnosed diabetics* (the skip-pattern the verifier gets right),
+age at diagnosis, weight/height, hypertension-medication use — plus a cross-year diabetes trend
+that survives the 2019 NHIS redesign rename. See `app/nhisokfchat/nhis_okf/okf_bundle/`.
+
+## Layout
+
+```
+nhisokfchat/
+├── agentcore/            # AgentCore CLI project (agentcore.json + generated cdk/)
+└── app/nhisokfchat/
+    ├── main.py           # thin entrypoint — re-exports the nhis_okf agent
+    ├── nhis_okf/         # the engine (retrieval + the grounded agent)
+    │   └── okf_bundle/   # the verified OKF bundle (ships in the CodeZip)
+    └── pyproject.toml    # retrieval-only deps (no pandas)
 ```
 
-## Commands
+## Where this comes from
 
-| Command | Description |
-| --- | --- |
-| `agentcore create` | Create a new AgentCore project |
-| `agentcore add` | Add resources (agent, memory, credential, gateway, evaluator, policy) |
-| `agentcore remove` | Remove resources |
-| `agentcore dev` | Run agent locally with hot-reload |
-| `agentcore deploy` | Deploy to AWS via CDK |
-| `agentcore status` | Show deployment status |
-| `agentcore invoke` | Invoke agent (local or deployed) |
-| `agentcore logs` | View agent logs |
-| `agentcore traces` | View agent traces |
-| `agentcore eval` | Run evaluations |
-| `agentcore package` | Package agent artifacts |
-| `agentcore validate` | Validate configuration |
-| `agentcore pause` | Pause a deployed agent |
-| `agentcore resume` | Resume a paused agent |
-| `agentcore fetch` | Fetch remote resource definitions |
-| `agentcore import` | Import existing resources |
-| `agentcore update` | Check for CLI updates |
-
-## Configuration
-
-Edit the JSON files in `agentcore/` to configure your project. See `agentcore/.llm-context/` for type definitions and validation constraints.
-
-The project uses a **flat resource model** — agents, memories, credentials, gateways, evaluators, and policies are top-level arrays in `agentcore.json`. Resources are independent; agents discover memories and credentials at runtime via environment variables or SDK calls.
-
-## Resources
-
-| Resource | Purpose |
-| --- | --- |
-| Agent (runtime) | HTTP, MCP, or A2A agent deployed to AgentCore Runtime |
-| Memory | Persistent context storage with configurable strategies |
-| Credential | API key or OAuth credential providers |
-| Gateway | MCP gateway that routes tool calls to targets |
-| Gateway Target | Tool implementation (Lambda, MCP server, OpenAPI, Smithy, API Gateway) |
-| Evaluator | Custom LLM-as-a-Judge or code-based evaluation |
-| Online Eval Config | Continuous evaluation pipeline for deployed agents |
-| Policy | Cedar authorization policies for gateway tools |
-
-### Agent Types
-
-- **Template agents**: Created from framework templates (Strands, LangChain/LangGraph, GoogleADK, OpenAI Agents, Autogen)
-- **BYO agents**: Bring your own code with `agentcore add agent --type byo`
-- **Import agents**: Import existing Bedrock agents with `agentcore import`
-
-### Build Types
-
-- **CodeZip**: Python source packaged as a zip and deployed directly to AgentCore Runtime
-- **Container**: Docker image built via CodeBuild (ARM64), pushed to ECR, and deployed to AgentCore Runtime
-
-## Documentation
-
-- [AgentCore CLI](https://github.com/aws/agentcore-cli)
-- [AgentCore CDK Constructs](https://github.com/aws/agentcore-l3-cdk-constructs)
-- [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/)
+This is the clean, deployable version. Development, the execution-grounded **verifier**, the full
+weighted-statistics engine, the test suite, and the change history live in the lab repo:
+[nhis-okf-compiler](https://github.com/andrewwint/nhis-okf-compiler). The verified bundle here is
+compiled there and vendored in.
