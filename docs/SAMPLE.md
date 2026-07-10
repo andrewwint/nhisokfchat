@@ -16,7 +16,8 @@ the data**:
 The agent states the universe + weight basis with every figure and never invents a number, and
 it never returns individual survey records — there is **no raw-row tool** in the deploy. `nhis
 analyze` / `nhis rows` (further down) are **internal researcher tools in the lab repo**, not the
-deployed surface. Sections 1–4 are real agent responses.
+deployed surface. Sections 1–4 are **real `agentcore invoke` responses**, captured live from the
+deployed AgentCore runtime (`nhisokfchat`, us-east-1, `mode: generative`) and then torn down.
 
 ## 1. A verified figure
 
@@ -38,18 +39,20 @@ The not-medical-advice / aggregate-only safety framing is appended to every answ
 ## 2. Refusal — no concept in the bundle
 
 ```
-$ agentcore invoke --prompt "What is the prevalence of asthma among US adults?"
+$ agentcore invoke '{"question": "What is the prevalence of asthma among U.S. adults?"}'
 ```
-> Unfortunately, **I cannot answer this question from the verified bundle.** The verified OKF
-> bundle does not contain a precomputed asthma prevalence concept for U.S. adults, and none of
-> my tools returned a relevant match. Providing a figure from outside knowledge would violate
-> my hard rules against inventing or estimating numbers.
+> I'm sorry, but I **cannot answer this question** from the verified data bundle. The verified
+> bundle currently contains only the following concepts:
+> - **Diagnosed diabetes** (ever told) [DIBEV_A]
+> - **Prediabetes** (ever told) [PREDIB_A]
+> - **Insulin use** among adults with diagnosed diabetes [DIBINS_A]
+> - **Age at diabetes diagnosis** [DIBAGETC_A]
 >
-> For authoritative asthma prevalence statistics, I'd recommend consulting CDC's NCHS and CDC
-> Asthma Data & Surveillance.
+> There is no asthma concept, and I don't invent numbers. For authoritative asthma statistics,
+> consult CDC's NCHS.
 
-*(Real `mode: generative` response. The agent refuses cleanly rather than serving a nearby
-concept — grounded-or-refuse, live.)*
+*(Real `mode: generative` response, live from the deployed runtime. The agent refuses cleanly
+rather than serving a nearby concept, and truthfully lists what it *does* have.)*
 
 ## 3. Grounded — and honest about its boundary
 
@@ -65,28 +68,28 @@ $ agentcore invoke '{"question": "how does survey weighting change diabetes prev
 
 No concept pre-computes insulin use *among women specifically*, so the agent calls
 `tool_analyze_rows`, which runs the same deterministic, weights-mandatory computation the
-verifier uses — restricted to the verified `DIBINS_A` — and reports the aggregate + CI. Real
-output from `./.venv/bin/nhis query "…"` (the deployed agent runs the identical code path):
+verifier uses — restricted to the verified `DIBINS_A` — and reports the aggregate + CI:
 
 ```
-$ nhis query "Among adults diagnosed with diabetes, what share of women take insulin?"
+$ agentcore invoke '{"question": "Among adults with diagnosed diabetes, what share of women take insulin?"}'
 ```
-> Among all U.S. adults diagnosed with diabetes, about **32.0%** currently take insulin
-> **[DIBINS_A]**. Among **women specifically**, the share is essentially the same at **31.9%**
-> (95% CI: 29.2%–34.6%), based on a survey-weighted denominator of approximately 12.6 million
-> women with diagnosed diabetes (unweighted n = 1,712).
+> Among **adult women with diagnosed diabetes**, an estimated **31.9% currently take insulin**
+> (95% CI: 29.2%–34.6%), based on a survey-weighted analysis of the verified variable
+> **[DIBINS_A]**.
+> - **Universe/denominator:** U.S. adult women with diagnosed diabetes (`DIBEV_A == 1 & SEX_A == 2`)
+> - Survey-weighted by `WTFA_A`, with a design-based CI; unweighted n = 1,712.
 
-The 31.88% women's figure is not an LLM guess — it is `tool_analyze_rows` computing over
-`DIBEV_A == 1 & SEX_A == 2`, weighted by `WTFA_A`, with a design-based CI. Asked for
-an **unverified** variable, the same tool refuses:
+That **31.88%** is not an LLM guess — it is `tool_analyze_rows` computing over
+`DIBEV_A == 1 & SEX_A == 2`, weighted by `WTFA_A`, with a design-based CI. Asked for an
+**unverified** variable, the same tool refuses:
 
 ```
-$ nhis query "What is the survey-weighted prevalence of current smoking among adults over 40?"
+$ agentcore invoke '{"question": "What share of U.S. adults currently smoke cigarettes?"}'
 ```
-> I'm unable to answer this from the verified data bundle. The subpopulation analysis was
-> refused because the smoking variable is **not among the verified variables** in the compiled
-> bundle (verified: DIBAGETC_A, DIBEV_A, DIBINS_A, PREDIB_A). I cannot invent, estimate, or
-> guess a figure.
+> I'm sorry, but I **cannot answer this question** from the verified data bundle. Both tools
+> returned no usable result: the OKF bundle has no precomputed smoking concept, and the
+> microdata variable for smoking status (`SMKCIGST_A`) is **not among the verified variables**.
+> I cannot invent, estimate, or guess a figure.
 
 ## Why this matters
 
