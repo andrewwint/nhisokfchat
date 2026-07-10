@@ -52,11 +52,6 @@ Weighted, verified figure (aggregate only — the number to cite):
 nhis analyze --variable DIBEV_A
 ```
 
-Raw row inspection (unweighted, not verified — for sanity-checking only; see the [tool reference](../references/parquet_query.md)):
-
-```bash
-nhis rows --columns "DIBEV_A" --limit 10
-```
 
 ## Related
 - [DIBINS_A](./DIBINS_A.md)

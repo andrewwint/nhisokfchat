@@ -13,3 +13,7 @@ cdk/node_modules/
 
 # Exception: Commit the State
 !.cli/deployed-state.json
+
+# CLI-generated local state + AI-assistant context (not part of the demo)
+.cli/
+.llm-context/
