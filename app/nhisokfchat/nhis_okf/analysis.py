@@ -9,6 +9,7 @@ because unweighted NHIS counts do not estimate the population.
 from __future__ import annotations
 
 import os
+import re
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -120,13 +121,147 @@ def _mask(df: pd.DataFrame, expr: str | None) -> pd.Series:
     """Boolean mask for a universe expression, or all-True when expr is None.
 
     NOTE (trust boundary): `expr` comes from registry/concept files authored in this
-    repo and the tool runs locally, so `df.eval` is safe here. If concepts ever accept
-    untrusted input, or this gains a web surface, replace `eval` with a parsed,
-    allow-listed predicate — `eval` on untrusted strings is a code-injection vector.
+    repo and the CLI runs locally, so `df.eval` is safe on THAT path. `eval` on an
+    untrusted string is a code-injection vector, so the moment an agent composes the
+    universe from user text (the `injection-sink@universe-eval` seam) the expression
+    MUST first pass `validate_universe()` — the parsed, allow-listed predicate gate.
+    Callers on the agent path (chat.py's row/subpopulation/table tools) do exactly that
+    before reaching this function; do not remove that gate. This function itself is left
+    permissive so the repo-authored CLI/concept/verifier universes evaluate identically.
     """
     if expr is None:
         return pd.Series(True, index=df.index)
     return df.eval(expr)
+
+
+# --- Allow-list gate for agent-supplied universe expressions ---------------------------
+#
+# The injection-sink mitigation for `_mask`'s `df.eval`. An agent-composed universe is
+# untrusted, so before it can reach `df.eval` it must parse cleanly as the SAME grammar the
+# repo's own universes use and nothing wider:
+#
+#     expr       := term (('&' | '|') term)*
+#     term       := '(' expr ')' | comparison
+#     comparison := COLUMN <op> NUMBER          op in  ==  !=  >=  <=  >  <
+#
+# Every identifier MUST be a known data column (validated against the real columns, not a
+# hardcoded list). There is no production for attribute access (`.`), a function call, a
+# string literal, a dunder, `import`, or a bare/unknown name, so each is rejected — never
+# evaluated. This deliberately matches the existing universes exactly (`DIBEV_A == 1`,
+# `(DIBEV_A == 1) | (PREDIB_A == 1)`, `SEX_A == 2`, `DIBEV_A == 1 & SEX_A == 2`,
+# `DIBEV_A == 999`) and nothing else, so no valid universe breaks while the sink is closed.
+_UNIVERSE_TOKEN = re.compile(
+    r"\s+"                                    # whitespace (skipped)
+    r"|(?P<num>-?\d+(?:\.\d+)?)"              # a numeric literal
+    r"|(?P<name>[A-Za-z_][A-Za-z0-9_]*)"      # an identifier (must be a known column)
+    r"|(?P<op>==|!=|>=|<=|>|<)"               # a comparison operator
+    r"|(?P<bool>[&|])"                        # a boolean combinator
+    r"|(?P<lpar>\()"
+    r"|(?P<rpar>\))"
+)
+_UNIVERSE_OPS = {"==", "!=", ">=", "<=", ">", "<"}
+
+
+def _tokenize_universe(expr: str) -> list[tuple[str, str]]:
+    """Tokenize a universe string, rejecting any character outside the grammar."""
+    tokens: list[tuple[str, str]] = []
+    pos, n = 0, len(expr)
+    while pos < n:
+        m = _UNIVERSE_TOKEN.match(expr, pos)
+        if m is None:
+            raise ValueError(
+                f"universe rejected: illegal character {expr[pos]!r} at position {pos} in "
+                f"{expr!r} — only COLUMN <op> NUMBER joined by & | ( ) is permitted"
+            )
+        pos = m.end()
+        kind = m.lastgroup
+        if kind is not None:  # None == matched the whitespace branch
+            tokens.append((kind, m.group()))
+    return tokens
+
+
+class _UniverseParser:
+    """Recursive-descent validator over the tokenized universe (accept/reject only).
+
+    It confirms the string is exactly `COLUMN <op> NUMBER` joined by `& | ( )`, with every
+    column in `allowed`. It never evaluates anything; on success the ORIGINAL string is
+    handed to `df.eval`, which does the real (pandas-precedence) evaluation.
+    """
+
+    def __init__(self, tokens: list[tuple[str, str]], allowed, expr: str):
+        self.tokens = tokens
+        self.allowed = allowed
+        self.expr = expr
+        self.pos = 0
+
+    def _peek(self) -> tuple[str, str]:
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else ("", "")
+
+    def _reject(self, why: str):
+        raise ValueError(f"universe rejected: {why} in {self.expr!r}")
+
+    def parse(self) -> None:
+        if not self.tokens:
+            self._reject("empty expression")
+        self._expr()
+        if self.pos != len(self.tokens):
+            kind, val = self._peek()
+            self._reject(f"unexpected trailing token {val!r}")
+
+    def _expr(self) -> None:
+        self._term()
+        while self._peek()[0] == "bool":
+            self.pos += 1
+            self._term()
+
+    def _term(self) -> None:
+        kind, _ = self._peek()
+        if kind == "lpar":
+            self.pos += 1
+            self._expr()
+            if self._peek()[0] != "rpar":
+                self._reject("unbalanced parenthesis")
+            self.pos += 1
+        else:
+            self._comparison()
+
+    def _comparison(self) -> None:
+        kind, val = self._peek()
+        if kind != "name":
+            self._reject(f"expected a column name, found {val!r}")
+        if "__" in val:
+            self._reject(f"dunder identifier {val!r} is not allowed")
+        if val not in self.allowed:
+            self._reject(f"unknown/invalid identifier {val!r} (not a known data column)")
+        self.pos += 1
+        kind, val = self._peek()
+        if kind != "op" or val not in _UNIVERSE_OPS:
+            self._reject(f"expected a comparison operator after {self.expr!r}, found {val!r}")
+        self.pos += 1
+        kind, val = self._peek()
+        if kind != "num":
+            self._reject(f"expected a numeric literal, found {val!r}")
+        self.pos += 1
+
+
+def validate_universe(expr: str | None, allowed_columns) -> None:
+    """Allow-list gate for an AGENT-SUPPLIED universe before it reaches `df.eval`.
+
+    Raises `ValueError` (and never evaluates) unless `expr` is exactly the grammar the
+    repo's own universes use: a comparison `COLUMN <op> NUMBER` (op in == != >= <= > <)
+    joined by `&`, `|`, and parentheses, with every identifier present in
+    `allowed_columns` (the real data columns). `None` is a no-op (means "all rows").
+
+    This is the mitigation for `_mask`'s `df.eval` injection sink; see that function's
+    trust-boundary note. Identifiers are validated against the actual columns, so nothing
+    valid is hardcoded and no unknown name (an import, a dunder, a call target) can pass.
+    """
+    if expr is None:
+        return
+    if not isinstance(expr, str):
+        raise ValueError(f"universe must be a string, got {type(expr).__name__}")
+    tokens = _tokenize_universe(expr)
+    _UniverseParser(tokens, set(allowed_columns), expr).parse()
 
 
 def compute_prevalence(

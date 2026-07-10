@@ -63,4 +63,4 @@ nhis rows --columns "DIBEV_A,DIBINS_A" --universe "DIBEV_A == 1" --limit 10
 
 ## Related
 - [DIBEV_A](./DIBEV_A.md)
-- [DIBPILL_A](./DIBPILL_A.md)
+- [PREDIB_A](./PREDIB_A.md)

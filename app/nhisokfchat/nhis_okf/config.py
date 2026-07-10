@@ -1,8 +1,8 @@
 """Runtime configuration for the chat agent (model + region selection).
 
-Local testing uses the Anthropic API (ANTHROPIC_API_KEY). The deploy target is Strands on
-Bedrock AgentCore, which uses AWS credentials and a Bedrock model id. Both are overridable
-by environment variables so nothing is hard-pinned.
+The agent runs as Strands on Bedrock AgentCore, using AWS credentials and a Bedrock model
+id. Both the region and model id are overridable by environment variables so nothing is
+hard-pinned.
 """
 
 from __future__ import annotations
@@ -25,6 +25,16 @@ def _shipped_bundle_dir() -> Path:
     return Path(__file__).resolve().parent / "okf_bundle"
 
 
+def _shipped_microdata_path() -> Path:
+    """The slim NHIS 2023 parquet shipped alongside the vendored `nhis_okf` package.
+
+    Carries only the columns the verified variables + survey design need (weight, strata,
+    PSU, and the verified/grouping columns) — not the full microdata — so the query-time
+    `tool_analyze_rows` tool can run a survey-weighted aggregate inside the CodeZip.
+    """
+    return Path(__file__).resolve().parent / "microdata" / "adult23_slice.parquet"
+
+
 def okf_dir() -> Path:
     """The verified OKF bundle directory.
 
@@ -43,13 +53,27 @@ def okf_dir() -> Path:
     return _shipped_bundle_dir()
 
 
+def microdata_path() -> Path:
+    """The NHIS 2023 microdata parquet for the query-time compute tool.
+
+    Resolution order (mirrors `okf_dir()`):
+      1. `NHIS_MICRODATA` env override, then
+      2. a repo-relative `data/adult23.parquet` when it exists (local runs against the full
+         file), then
+      3. the slim parquet shipped inside the installed package (the deployed CodeZip, which
+         has no repo-relative `data/`).
+    """
+    override = os.environ.get("NHIS_MICRODATA")
+    if override:
+        return Path(override)
+    repo_data = _REPO_ROOT / "data" / "adult23.parquet"
+    if repo_data.exists():
+        return repo_data
+    return _shipped_microdata_path()
+
+
 def aws_region() -> str:
     return os.environ.get("BEDROCK_REGION") or os.environ.get("AWS_REGION") or "us-east-1"
-
-
-def anthropic_model_id() -> str:
-    """Model id for the Anthropic API path (local testing)."""
-    return os.environ.get("NHIS_ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 
 def bedrock_model_id() -> str:
@@ -59,7 +83,3 @@ def bedrock_model_id() -> str:
     override with NHIS_BEDROCK_MODEL. Default is a recent Claude Sonnet inference profile.
     """
     return os.environ.get("NHIS_BEDROCK_MODEL", "us.anthropic.claude-sonnet-4-6")
-
-
-def has_anthropic_key() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))

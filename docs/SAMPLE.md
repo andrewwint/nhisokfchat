@@ -2,21 +2,21 @@
 
 **The chat agent is the only end-user surface.** End users ask questions in natural language;
 they never touch the CLI. The agent runs on **Amazon Bedrock AgentCore** when deployed
-(`agentcore invoke`) and on the same code path locally via `nhis query` (Anthropic API). It
-has **three deterministic tools and no other window onto the data**:
+(`agentcore invoke`). It has **two deterministic, aggregate-only tools and no other window onto
+the data**:
 
-- `search_verified_okf` — retrieval over the verified OKF bundle (grounded at *compile* time):
+- `tool_search_okf` — retrieval over the verified OKF bundle (grounded at *compile* time):
   answers from a precomputed concept, cites the concept id, quotes the figure + design-based CI.
-- `analyze_subpopulation` — a deterministic, survey-weighted computation with a design-based
+- `tool_analyze_rows` — a deterministic, survey-weighted computation with a design-based
   CI for an *ad-hoc subgroup* a concept does not already carry (grounded at *query* time):
-  verified variables only, aggregate-only, and it refuses rather than guesses.
-- `groupby_table` — a deterministic, survey-weighted **by-group table** (one aggregate cell +
-  design-based CI per substantive group value) for a "by <group>" question, e.g. insulin use
-  by sex: verified variables only, aggregate cells only (never rows), refuses rather than guesses.
+  verified variables only, aggregate-only, and it refuses rather than guesses. Its
+  agent-supplied `universe` filter passes an allow-list validator (`COLUMN <op> NUMBER` joined
+  by `& | ( )` over known columns) before any `df.eval`, so the injection sink is closed.
 
-The agent states the universe + weight basis with every figure and never invents a number.
-`nhis analyze` / `nhis rows` (further down) are **internal researcher tools**, not the
-end-user surface. Sections 1–4 are real agent responses.
+The agent states the universe + weight basis with every figure and never invents a number, and
+it never returns individual survey records — there is **no raw-row tool** in the deploy. `nhis
+analyze` / `nhis rows` (further down) are **internal researcher tools in the lab repo**, not the
+deployed surface. Sections 1–4 are real agent responses.
 
 ## 1. A verified figure
 
@@ -64,7 +64,7 @@ $ agentcore invoke '{"question": "how does survey weighting change diabetes prev
 ## 4. An ad-hoc subgroup — answered at query time (the second tool)
 
 No concept pre-computes insulin use *among women specifically*, so the agent calls
-`analyze_subpopulation`, which runs the same deterministic, weights-mandatory computation the
+`tool_analyze_rows`, which runs the same deterministic, weights-mandatory computation the
 verifier uses — restricted to the verified `DIBINS_A` — and reports the aggregate + CI. Real
 output from `./.venv/bin/nhis query "…"` (the deployed agent runs the identical code path):
 
@@ -76,7 +76,7 @@ $ nhis query "Among adults diagnosed with diabetes, what share of women take ins
 > (95% CI: 29.2%–34.6%), based on a survey-weighted denominator of approximately 12.6 million
 > women with diagnosed diabetes (unweighted n = 1,712).
 
-The 31.88% women's figure is not an LLM guess — it is `analyze_subpopulation` computing over
+The 31.88% women's figure is not an LLM guess — it is `tool_analyze_rows` computing over
 `DIBEV_A == 1 & SEX_A == 2`, weighted by `WTFA_A`, with a design-based CI. Asked for
 an **unverified** variable, the same tool refuses:
 
@@ -85,8 +85,8 @@ $ nhis query "What is the survey-weighted prevalence of current smoking among ad
 ```
 > I'm unable to answer this from the verified data bundle. The subpopulation analysis was
 > refused because the smoking variable is **not among the verified variables** in the compiled
-> bundle (verified: DIBAGETC_A, DIBEV_A, DIBINS_A, DIBPILL_A, HEIGHTTC_A, HYPEV_A, HYPMED_A,
-> PREDIB_A, WEIGHTLBTC_A). I cannot invent, estimate, or guess a figure.
+> bundle (verified: DIBAGETC_A, DIBEV_A, DIBINS_A, PREDIB_A). I cannot invent, estimate, or
+> guess a figure.
 
 ## Why this matters
 
@@ -105,7 +105,7 @@ refuse than fabricate.
 # Internal / researcher tool — `nhis analyze` (ad-hoc subpopulation lookups)
 
 `nhis analyze` is an **internal researcher CLI, not the end-user surface** — it is the same
-deterministic engine the chat's `analyze_subpopulation` tool wraps (section 4), exposed on the
+deterministic engine the chat's `tool_analyze_rows` tool wraps (section 4), exposed on the
 command line for direct inspection. You filter across rows with an arbitrary universe
 expression (the *means*); the command returns only a **weighted aggregate with its
 design-based 95% CI** (the *output*). It never emits individual records — the aggregate-only
@@ -128,14 +128,6 @@ Insulin use **among adults with diagnosed diabetes** (`DIBEV_A == 1`):
 $ nhis analyze --variable DIBINS_A --universe "DIBEV_A == 1" --stat prevalence
 DIBINS_A prevalence: 31.96% (95% CI 30.08-33.84%; design-based SE 0.96; weighted by WTFA_A;
   universe: DIBEV_A == 1; n=3291 unweighted, denominator 25,248,324 weighted)
-```
-
-Hypertension-medication use **among adults told they have hypertension** (`HYPEV_A == 1`):
-
-```
-$ nhis analyze --variable HYPMED_A --universe "HYPEV_A == 1" --stat prevalence
-HYPMED_A prevalence: 79.62% (95% CI 78.63-80.61%; design-based SE 0.50; weighted by WTFA_A;
-  universe: HYPEV_A == 1; n=11083 unweighted, denominator 83,085,709 weighted)
 ```
 
 ### The universe changes the number
@@ -167,18 +159,19 @@ DIBAGETC_A quantile (q=0.5): 50.00 (95% CI 48.00-50.00; design-based SE 0.01; we
 
 ## Sex-stratified subpopulation
 
-The same query surface stratifies by any loaded column with **no engine change** — here the
-survey-weighted **mean weight** of U.S. adults by sex (`SEX_A`: 1 = male, 2 = female). Each
-call returns an aggregate estimate and its design-based CI, never any individual rows:
+The same query surface stratifies by any loaded column with **no engine change** — here
+insulin use among adults with diagnosed diabetes (`DIBEV_A == 1`) split by sex (`SEX_A`:
+1 = male, 2 = female). Each call returns an aggregate estimate and its design-based CI,
+never any individual rows:
 
 ```
-$ nhis analyze --variable WEIGHTLBTC_A --universe "SEX_A == 1" --stat mean
-WEIGHTLBTC_A mean: 195.00 (95% CI 194.20-195.81; design-based SE 0.41; weighted by WTFA_A;
-  universe: SEX_A == 1; n=12438 unweighted, denominator 115,446,875 weighted)
+$ nhis analyze --variable DIBINS_A --universe "DIBEV_A == 1 & SEX_A == 1" --stat prevalence
+DIBINS_A prevalence: 32.04% (95% CI 29.22-34.85%; design-based SE 1.44; weighted by WTFA_A;
+  universe: DIBEV_A == 1 & SEX_A == 1; n=1579 unweighted, denominator 12,631,912 weighted)
 
-$ nhis analyze --variable WEIGHTLBTC_A --universe "SEX_A == 2" --stat mean
-WEIGHTLBTC_A mean: 162.68 (95% CI 161.90-163.47; design-based SE 0.40; weighted by WTFA_A;
-  universe: SEX_A == 2; n=14599 unweighted, denominator 120,035,788 weighted)
+$ nhis analyze --variable DIBINS_A --universe "DIBEV_A == 1 & SEX_A == 2" --stat prevalence
+DIBINS_A prevalence: 31.88% (95% CI 29.21-34.56%; design-based SE 1.36; weighted by WTFA_A;
+  universe: DIBEV_A == 1 & SEX_A == 2; n=1712 unweighted, denominator 12,616,413 weighted)
 ```
 
 ## By-group table in one call (`--groupby`)
@@ -198,8 +191,10 @@ DIBINS_A prevalence by SEX_A (survey-weighted by WTFA_A; universe: DIBEV_A == 1)
   SEX_A=2: 31.88% (95% CI 29.21-34.56%; n=1712)
 ```
 
-The grounded chat agent uses the same computation for a "by <group>" question via its
-`groupby_table` tool (verified-variable-or-refuse, aggregate table text only).
+The by-group table above is an **internal researcher (`nhis analyze`) capability in the lab
+repo**. The deployed chat agent does not ship a `groupby_table` tool; for a "by <group>"
+question it calls `tool_analyze_rows` once per group value (verified-variable-or-refuse,
+aggregate only).
 
 ## Refusals (grounded-or-refuse, and no fabricated numbers)
 
@@ -208,8 +203,7 @@ A variable with no verified concept is refused, and the message lists what is av
 ```
 $ nhis analyze --variable AGE_A --universe "DIBEV_A == 1" --stat mean
 refused: 'AGE_A' is not backed by a verified concept in the compiled bundle. Run
-  `nhis compile` first, or choose one of: DIBAGETC_A, DIBEV_A, DIBINS_A, DIBPILL_A,
-  HEIGHTTC_A, HYPEV_A, HYPMED_A, PREDIB_A, WEIGHTLBTC_A.
+  `nhis compile` first, or choose one of: DIBAGETC_A, DIBEV_A, DIBINS_A, PREDIB_A.
 ```
 
 An empty subpopulation refuses rather than reporting a confidently-wrong `0.0`:

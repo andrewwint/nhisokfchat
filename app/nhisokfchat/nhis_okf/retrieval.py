@@ -95,7 +95,7 @@ def verified_variables(variables_dir: Path = VARIABLES_DIR) -> set[str]:
 
     The compiler only writes concepts that passed execution-grounded verification, so a
     concept file's presence is proof of grounding. This is the shared allow-list for both
-    the `nhis analyze` CLI and the agent's `analyze_subpopulation` tool.
+    the `nhis analyze` CLI and the agent's `tool_analyze_rows` tool.
     """
     return {
         c.frontmatter["variable"]
