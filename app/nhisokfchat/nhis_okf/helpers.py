@@ -109,23 +109,6 @@ def validate_agent_universe(universe: str | None) -> None:
     analysis.validate_universe(universe, agent_allowed_columns())
 
 
-# --- The Bedrock model builder (used by main.py to build the Strands agent) --------------
-
-def bedrock_model():
-    """Build the Bedrock model backing the Strands agent — the deploy path.
-
-    Model id and region come from `config` (both env-overridable); output is hard-capped at
-    MAX_OUTPUT_TOKENS. Tests inject their own stub model instead of calling this.
-    """
-    from strands.models.bedrock import BedrockModel
-
-    return BedrockModel(
-        model_id=config.bedrock_model_id(),
-        region_name=config.aws_region(),
-        max_tokens=MAX_OUTPUT_TOKENS,
-    )
-
-
 # --- The extractive fallback (grounded answer when the Bedrock agent is unavailable) -----
 
 def extractive_answer(query: str, hits: list[Hit]) -> Answer:

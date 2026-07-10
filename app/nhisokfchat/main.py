@@ -28,8 +28,9 @@ from typing import Any
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from bedrock_agentcore.runtime.models import PingStatus
 from strands import Agent, tool
+from strands.models.bedrock import BedrockModel
 
-from nhis_okf import chat, helpers
+from nhis_okf import chat, config, helpers
 
 app = BedrockAgentCoreApp()
 log = app.logger
@@ -52,22 +53,28 @@ def tool_analyze_rows(
     return chat.analyze_rows(variable, universe, stat=stat, q=q)
 
 
-# --- The Strands agent, built once on first use -------------------------------------------
+# --- The grounded agent ------------------------------------------------------------------
 
-_agent: Agent | None = None
+def build_grounded_agent() -> Agent:
+    """Assemble the agent that answers a question — this object IS the reasoning loop.
 
-
-def _get_agent() -> Agent:
-    """The grounded Strands agent on Bedrock, constructed lazily so `import main` needs no
-    AWS credentials (the model is only built the first time a question is answered)."""
-    global _agent
-    if _agent is None:
-        _agent = Agent(
-            model=helpers.bedrock_model(),
-            system_prompt=chat.OKF_ANALYST_PROMPT,
-            tools=[tool_search_okf, tool_analyze_rows],
-        )
-    return _agent
+    Strands hands the question, the system prompt, and the two tools to Claude on Amazon
+    Bedrock. Claude reads the question, decides which tool to call, calls it, reads back only
+    what the tool returns, and writes the grounded answer. Three simple pieces:
+      * model  — which LLM answers (a Claude model on Bedrock),
+      * prompt — the rules it must follow (grounded-or-refuse; see chat.OKF_ANALYST_PROMPT),
+      * tools  — the only things it is allowed to call (both aggregate-only).
+    Built fresh per request (so each answer is stateless, and `import main` needs no AWS creds).
+    """
+    return Agent(
+        model=BedrockModel(
+            model_id=config.bedrock_model_id(),
+            region_name=config.aws_region(),
+            max_tokens=helpers.MAX_OUTPUT_TOKENS,
+        ),
+        system_prompt=chat.OKF_ANALYST_PROMPT,
+        tools=[tool_search_okf, tool_analyze_rows],
+    )
 
 
 def _parse_question(payload: dict[str, Any]) -> str | None:
@@ -100,7 +107,9 @@ def invoke(payload: dict[str, Any], context: Any = None) -> dict[str, Any]:
     # source if the Bedrock agent is unavailable.
     hits = helpers.retrieve(question)
     try:
-        text = str(_get_agent()(question)).strip()
+        # Run the agent: Claude reads the question and calls the two tools above to answer it.
+        agent = build_grounded_agent()
+        text = str(agent(question)).strip()
         answer_text = f"{text}\n\n{helpers.SAFETY}"
         mode = "generative"
         citations = [helpers._citation(h) for h in hits]
