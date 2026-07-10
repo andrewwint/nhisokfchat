@@ -6,7 +6,6 @@ build-backend = "hatchling.build"
 name = "nhisokfchat"
 version = "0.1.0"
 description = "Grounded NHIS-OKF chat on Bedrock AgentCore — two aggregate tools over the verified OKF bundle"
-readme = "README.md"
 requires-python = ">=3.10"
 # Third-party deps AgentCore installs at deploy. Two aggregate tools: sklearn/numpy/PyYAML for
 # TF-IDF retrieval over the vendored bundle, plus pandas/pyarrow for the survey-weighted
