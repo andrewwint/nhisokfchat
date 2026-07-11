@@ -21,8 +21,8 @@ More real transcripts in [docs/SAMPLE.md](docs/SAMPLE.md).
 ## The idea: OKF + AgentCore
 
 **OKF (Open Knowledge Format)** is a directory of markdown files with YAML frontmatter — one
-per verified *concept*. Each file here isn't a query recipe or a raw doc; it's an **answer that
-already passed execution-grounded verification**: the documented analysis was *run* against the
+per verified _concept_. Each file here isn't a query recipe or a raw doc; it's an **answer that
+already passed execution-grounded verification**: the documented analysis was _run_ against the
 real CDC NHIS microdata with proper survey weights, and only the concepts whose numbers checked
 out were written to the bundle. A statistic that is structurally clean but statistically wrong
 (ignores the survey weights, or breaks a skip-pattern) is **quarantined** — it never becomes a
@@ -55,9 +55,9 @@ Prerequisites: an AWS account with Bedrock (Claude Sonnet) model access, the
 and CDK bootstrapped in your region.
 
 ```bash
-agentcore deploy                 # build the CodeZip → CloudFormation → AgentCore runtime
-agentcore invoke --prompt "..."  # ask the deployed agent
-agentcore status                 # runtime ARN + health
+agentcore deploy                           # build the CodeZip → CloudFormation → AgentCore runtime
+agentcore invoke --prompt "..."            # ask the deployed agent
+agentcore status                           # runtime ARN + health
 agentcore remove all && agentcore deploy   # tear it down
 ```
 
@@ -72,10 +72,10 @@ is unavailable.
 - **`tool_search_okf`** — retrieval over the verified OKF bundle. Answers from a precomputed
   concept, cites the concept id (e.g. `[DIBINS_A]`), quotes the figure + design-based CI.
 - **`tool_analyze_rows`** — a deterministic, survey-weighted computation (percentage/mean/
-  quantile + design-based CI) for an *ad-hoc subgroup* a concept does not already carry. It is
+  quantile + design-based CI) for an _ad-hoc subgroup_ a concept does not already carry. It is
   restricted to **verified variables only**, returns **aggregate cells only — never raw rows**,
   and its agent-supplied `universe` filter passes an **allow-list validator** (`COLUMN <op>
-  NUMBER` joined by `& | ( )` over known columns) before any `df.eval` — so the injection sink is
+NUMBER` joined by `& | ( )` over known columns) before any `df.eval` — so the injection sink is
   closed. It refuses rather than guessing.
 
 There is **no raw-row tool** in the deploy: individual-record inspection is a deliberately
@@ -95,7 +95,7 @@ local-only capability that never ships here.
 ## What's in the bundle
 
 Four verified NHIS 2023 diabetes concepts: diagnosed-diabetes prevalence (`DIBEV_A`), insulin
-use *among diagnosed diabetics* (`DIBINS_A` — the skip-pattern the verifier gets right),
+use _among diagnosed diabetics_ (`DIBINS_A` — the skip-pattern the verifier gets right),
 prediabetes (`PREDIB_A`), and age at diagnosis (`DIBAGETC_A`). See
 `app/nhisokfchat/nhis_okf/okf_bundle/`.
 
