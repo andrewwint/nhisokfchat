@@ -40,7 +40,9 @@ log = app.logger
 
 @tool
 def tool_search_okf(query: str) -> str:
-    """Search the verified OKF bundle and return matching concepts (aggregate figures only)."""
+    """Retrieve a matching verified concept from the OKF bundle (aggregate figures only).
+    Here that's in-process TF-IDF over the markdown bundle — no vector DB, no embeddings;
+    swap this body for your domain's retrieval."""
     return chat.search_okf(query)
 
 
@@ -48,8 +50,9 @@ def tool_search_okf(query: str) -> str:
 def tool_analyze_rows(
     variable: str, universe: str, stat: str = "prevalence", q: float = 0.5
 ) -> str:
-    """Compute a survey-weighted AGGREGATE (+ design-based CI) for an ad-hoc subgroup of a
-    verified variable. Returns an aggregate estimate only — NEVER individual rows."""
+    """Run the live, allow-listed query and return an AGGREGATE answer — never raw records.
+    Here that's a survey-weighted pandas/pyarrow query over the parquet bundled in the CodeZip
+    (with a design-based CI); swap this body for a SQL query or an API call in your domain."""
     return chat.analyze_rows(variable, universe, stat=stat, q=q)
 
 
