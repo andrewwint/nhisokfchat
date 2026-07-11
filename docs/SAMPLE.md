@@ -22,7 +22,7 @@ deployed AgentCore runtime (`nhisokfchat`, us-east-1, `mode: generative`) and th
 ## 1. A verified figure
 
 ```
-$ agentcore invoke --prompt "What share of U.S. adults with diagnosed diabetes take insulin?"
+$ agentcore invoke '{"question": "What share of U.S. adults with diagnosed diabetes take insulin?"}'
 ```
 > Based on the verified OKF bundle, here is the finding:
 >
