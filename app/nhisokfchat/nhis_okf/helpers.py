@@ -40,9 +40,16 @@ class Answer:
 
 # --- Retrieval + formatting (used by tool_search_okf and the extractive answer) ----------
 
+@lru_cache(maxsize=1)
+def _retriever() -> Retriever:
+    """Build the TF-IDF retriever once — fitting the vectorizer over the bundle is a startup
+    cost, not a per-query one. (Without this the deployed tool re-fit it on every request.)"""
+    return Retriever.from_bundle()
+
+
 def retrieve(query: str, k: int = 3) -> list[Hit]:
     """The k verified concepts most relevant to `query`, over the shipped OKF bundle."""
-    return Retriever.from_bundle().search(query, k=k)
+    return _retriever().search(query, k=k)
 
 
 def _citation(hit: Hit) -> str:
